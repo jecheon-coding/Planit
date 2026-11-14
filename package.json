@@ -1,0 +1,11 @@
+{
+  "name": "planit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "일정과 할일을 함께 관리하는 개인 스케줄 앱 (Vanilla HTML/CSS/JS)",
+  "type": "module",
+  "scripts": {
+    "test": "node tests/run-node.js",
+    "start": "npx --yes serve -l 5173 ."
+  }
+}

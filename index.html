@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="일정과 할일을 함께 관리하는 개인 스케줄러">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b1120" media="(prefers-color-scheme: dark)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Planit">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="format-detection" content="telephone=no">
+  <title>Planit</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/day-view.css">
+  <link rel="stylesheet" href="css/month-view.css">
+  <link rel="stylesheet" href="css/tasks-view.css">
+</head>
+<body>
+  <div id="storage-warning" class="banner" role="status" hidden>
+    브라우저 저장소를 사용할 수 없어 이 탭을 닫으면 데이터가 사라집니다. 설정 › 내보내기로 백업하세요.
+  </div>
+
+  <header class="app-header">
+    <button type="button" id="menu-btn" class="icon-btn menu-btn" aria-label="메뉴" aria-controls="sidebar" aria-expanded="false">
+      <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <h1 class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-text">Planit</span></h1>
+
+    <div class="nav">
+      <button type="button" id="prev-btn" class="icon-btn" aria-label="이전">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button type="button" id="today-btn" class="btn">오늘</button>
+      <button type="button" id="next-btn" class="icon-btn" aria-label="다음">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+
+    <h2 id="date-label" class="date-label" aria-live="polite"></h2>
+
+    <div class="view-tabs" role="tablist" aria-label="보기 전환">
+      <button type="button" role="tab" id="tab-day" data-view="day" aria-controls="main-view" title="일간 (D)">일간</button>
+      <button type="button" role="tab" id="tab-month" data-view="month" aria-controls="main-view" title="월간 (M)">월간</button>
+      <button type="button" role="tab" id="tab-tasks" data-view="tasks" aria-controls="main-view" title="할일 (L)">할일</button>
+    </div>
+
+    <button type="button" id="new-btn" class="btn primary" title="새 항목 (N)">
+      <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+      <span class="new-btn-label">새 항목</span>
+    </button>
+  </header>
+
+  <div id="quick-add" class="quick-add"></div>
+
+  <div class="app-body">
+    <aside id="sidebar" class="sidebar" aria-label="사이드바">
+      <section id="mini-calendar" class="mini-cal" aria-label="미니 캘린더"></section>
+      <section id="filter-bar" aria-label="필터"></section>
+      <section id="someday-tasks" aria-label="언제든 할일"></section>
+      <section id="settings-panel" aria-label="설정"></section>
+      <p class="shortcut-help">
+        <kbd>/</kbd> 빠른 입력 · <kbd>N</kbd> 새 항목 · <kbd>D</kbd>/<kbd>M</kbd>/<kbd>L</kbd> 보기 · <kbd>T</kbd> 오늘 · <kbd>←</kbd><kbd>→</kbd> 이동
+      </p>
+    </aside>
+    <div id="sidebar-backdrop" class="sidebar-backdrop" hidden></div>
+    <main id="main-view" class="main-view" role="tabpanel"></main>
+  </div>
+
+  <!-- 모바일 전용: 새 항목 플로팅 버튼 + 하단 탭바 -->
+  <button type="button" id="fab" class="fab" aria-label="새 항목">
+    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+    <span id="fab-label">새 일정</span>
+  </button>
+  <nav class="tabbar" aria-label="하단 메뉴">
+    <button type="button" data-view="day">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 10h16M9 3v4M15 3v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M8 14h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>일간</span>
+    </button>
+    <button type="button" data-view="month">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 10h16M9 3v4M15 3v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8.5" cy="14" r="1" fill="currentColor"/><circle cx="12" cy="14" r="1" fill="currentColor"/><circle cx="15.5" cy="14" r="1" fill="currentColor"/><circle cx="8.5" cy="17" r="1" fill="currentColor"/><circle cx="12" cy="17" r="1" fill="currentColor"/></svg>
+      <span>월간</span>
+    </button>
+    <button type="button" data-view="tasks">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 12l3 3 5-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>할일</span>
+    </button>
+    <button type="button" id="tabbar-menu" aria-controls="sidebar" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>메뉴</span>
+    </button>
+  </nav>
+
+  <dialog id="item-modal"></dialog>
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+
+  <noscript><p class="banner">Planit은 JavaScript가 필요합니다.</p></noscript>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

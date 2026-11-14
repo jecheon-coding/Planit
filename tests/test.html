@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Planit 테스트</title>
+  <style>
+    body { font-family: system-ui, "Malgun Gothic", sans-serif; margin: 24px; background: #fff; color: #0f172a; }
+    h1 { font-size: 20px; }
+    .summary { font-weight: 700; margin: 12px 0; }
+    li { font-family: ui-monospace, Consolas, monospace; font-size: 13px; padding: 2px 0; }
+    .ok { color: #059669; }
+    .fail { color: #dc2626; }
+    .err { color: #64748b; margin-left: 20px; display: block; }
+  </style>
+</head>
+<body>
+  <h1>Planit 단위 테스트</h1>
+  <p class="summary" id="summary">실행 중…</p>
+  <ul id="results"></ul>
+  <script type="module">
+    import { run } from './runner.js';
+    import './date.test.js';
+    import './parser.test.js';
+
+    const results = await run();
+    const list = document.getElementById('results');
+    for (const r of results) {
+      const li = document.createElement('li');
+      li.className = r.ok ? 'ok' : 'fail';
+      li.textContent = `${r.ok ? '✓' : '✗'} ${r.name}`;
+      if (!r.ok) {
+        const err = document.createElement('span');
+        err.className = 'err';
+        err.textContent = r.error;
+        li.append(err);
+      }
+      list.append(li);
+    }
+    const failed = results.filter((r) => !r.ok).length;
+    document.getElementById('summary').textContent = `${results.length - failed} passed, ${failed} failed`;
+  </script>
+</body>
+</html>
