@@ -1,9 +1,12 @@
 // 빠른 입력 자연어 파서.
-// 파이프라인: 정규화 → 할일 접두어 → #카테고리 → 날짜 → 시간/범위 → 기간 → 종일 → 종류 키워드 → 제목 → 카테고리 추론
+// 파이프라인: 정규화 → 할일 접두어 → #카테고리 → @장소 → 알림 → 반복 → 날짜 → 시간/범위 → 기간 → 종일 → 종류 키워드 → 제목 → 카테고리 추론
 // 매칭된 구간은 같은 길이의 공백으로 "가려서" 다음 단계로 넘긴다 → 원문 위치가 유지되어 하이라이트에 쓸 수 있다.
 import { DATE_RULES } from './date-rules.js';
 import { extractTimes, extractDuration, ALL_DAY_RE } from './time-rules.js';
 import { extractHashtag, inferCategory } from './category-rules.js';
+import { extractRecurrence } from './recurrence-rules.js';
+import { extractLocation, extractReminders } from './extra-rules.js';
+import { convertReminders, normalizeReminders } from '../reminders.js';
 import { DEFAULT_CATEGORIES } from '../models.js';
 import {
   startOfDay, atMinutes, addMinutes, toLocalDateStr, toLocalDateTimeStr,
@@ -69,6 +72,13 @@ export function parseQuickInput(text, now = new Date(), options = {}) {
   let categoryId = extractHashtag(ctx, categories);
   let categorySource = categoryId ? 'tag' : null;
 
+  // @장소, "10분 전 알림" (시간·날짜보다 먼저: "1시간 전 알림"의 "1시간"이 일정 길이로 잡히지 않게)
+  const location = extractLocation(ctx);
+  const reminders = extractReminders(ctx);
+
+  // 반복 (날짜보다 먼저: "매주 월요일"의 "월요일"이 단일 날짜로 잡히지 않게)
+  let repeat = extractRecurrence(ctx, today);
+
   // 날짜
   let date = null;
   for (const rule of DATE_RULES) {
@@ -96,8 +106,17 @@ export function parseQuickInput(text, now = new Date(), options = {}) {
     ctx.consumeMatch(m, 'type');
   }
   if ((m = DUE_RE.exec(ctx.rest))) {
-    dueMode = true;
-    ctx.consumeMatch(m, 'type');
+    // 반복 + "12월 31일까지" → 반복 종료일
+    if (repeat && date) {
+      repeat.recurrence.until = toLocalDateStr(date);
+      date = null;
+      ctx.consumeMatch(m, 'repeat');
+      const dateToken = ctx.tokens.find((t) => t.kind === 'date');
+      if (dateToken) dateToken.kind = 'repeat';
+    } else {
+      dueMode = true;
+      ctx.consumeMatch(m, 'type');
+    }
   }
   if (DEADLINE_RE.test(ctx.rest)) dueMode = true; // '마감'은 제목에 남긴다
 
@@ -110,8 +129,12 @@ export function parseQuickInput(text, now = new Date(), options = {}) {
   }
 
   const hasTime = startMin != null;
-  const isTask = forceTask || dueMode || (!hasTime && !allDay);
-  const base = date ?? today;
+  const taskWanted = forceTask || dueMode; // "할일", "까지", "마감", "- " 접두어
+  // 반복 + 할일 표현 → 반복 할일 / 반복만 있고 시간이 없으면 → 종일 반복 일정 (예: 매월 15일 월세)
+  if (repeat && !hasTime && !taskWanted) allDay = true;
+  const isTask = taskWanted || (!hasTime && !allDay);
+  // 매월 15일·매년 3/1처럼 날짜 자체가 규칙이면 그 날짜가 우선, 아니면 지정한 날짜 → 규칙상 첫 날짜 → 오늘
+  const base = repeat?.anchorFixed ? repeat.anchor : (date ?? repeat?.anchor ?? today);
   const result = {
     type: isTask ? 'task' : 'event',
     title,
@@ -121,6 +144,9 @@ export function parseQuickInput(text, now = new Date(), options = {}) {
     end: null,
     allDay: false,
     due: null,
+    recurrence: repeat?.recurrence ?? null,
+    location,
+    reminders: null,
     tokens: ctx.tokens.sort((a, b) => a.start - b.start),
     warnings,
   };
@@ -129,23 +155,34 @@ export function parseQuickInput(text, now = new Date(), options = {}) {
     if (hasTime) {
       const due = atMinutes(base, startMin);
       result.due = toLocalDateTimeStr(due);
-      if (due < now) warnings.push('마감 시각이 이미 지났습니다.');
-    } else if (date) {
-      result.due = toLocalDateStr(date);
-      if (date < today) warnings.push('마감일이 이미 지났습니다.');
+      if (due < now && !repeat) warnings.push('마감 시각이 이미 지났습니다.');
+    } else if (date || repeat) {
+      // 반복 할일은 첫 회차 날짜가 마감일 (매주 금요일 → 이번 금요일)
+      result.due = toLocalDateStr(base);
+      if (base < today && !repeat) warnings.push('마감일이 이미 지났습니다.');
     }
   } else if (allDay) {
     result.allDay = true;
     result.start = toLocalDateStr(base);
     result.end = result.start;
-    if (base < today) warnings.push('지난 날짜입니다.');
+    if (base < today && !repeat) warnings.push('지난 날짜입니다.');
   } else {
     const start = atMinutes(base, startMin);
     let end = endMin != null ? atMinutes(base, endMin) : addMinutes(start, durationMin ?? defaultDurationMin);
     if (end <= start) end = addMinutes(start, defaultDurationMin);
     result.start = toLocalDateTimeStr(start);
     result.end = toLocalDateTimeStr(end);
-    if (start < now) warnings.push('지난 시각입니다.');
+    if (start < now && !repeat) warnings.push('지난 시각입니다.');
+  }
+
+  // 알림: 종일·날짜만 있는 항목이면 "N일 전 오전 9시"로 / 마감 없는 할일은 알림을 둘 수 없음
+  if (reminders) {
+    const dateOnly = result.type === 'task' ? !(result.due && result.due.length > 10) : result.allDay;
+    if (result.type === 'task' && !result.due) {
+      if (reminders.length) warnings.push('마감일이 없으면 알림을 받을 수 없습니다.');
+    } else {
+      result.reminders = dateOnly ? convertReminders(reminders, true) : normalizeReminders(reminders);
+    }
   }
 
   return result;

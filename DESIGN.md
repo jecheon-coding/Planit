@@ -18,7 +18,7 @@
 | G4 | 자연어 빠른 입력 | "내일 오후 3시 회의" 입력 → 날짜·시간·제목이 자동 채워짐 |
 
 ### 1.2 범위 밖 (v1)
-- 반복 일정, 알림(Notification), 다중 사용자/동기화, 서버 저장
+- 알림(Notification), 다중 사용자/동기화, 서버 저장 (일정·할일 반복은 v1.1에서 추가 → [6.6](#66-반복-일정할일))
 - → [13. 향후 확장](#13-향후-확장)에서 다룸
 
 ---
@@ -139,6 +139,18 @@
  * @property {boolean} [done]
  * @property {string}  [doneAt]
  *
+ * // 반복 (일정·할일) → 6.6 반복 일정
+ * @property {Recurrence} [recurrence]  - 반복 규칙 (원본에만)
+ * @property {string[]}   [exdates]     - 제외된 회차 날짜 "YYYY-MM-DD"
+ * @property {Object<string,string>} [doneDates] - 반복 할일: 회차별 완료 { "YYYY-MM-DD": 완료시각 }
+ * @property {string}     [recurringId] - "이 일정만" 수정한 회차: 원본 id
+ * @property {string}     [originalDate] - 그 회차의 원래 날짜
+ *
+ * // 알림·장소·사진 (일정·할일 공통) → 6.7
+ * @property {number[]}  reminders  - 알림: 기준 시각 몇 분 전인지 (최대 5개, 오름차순)
+ * @property {string}    location   - 장소 (최대 200자)
+ * @property {string[]}  photos     - 메모 사진 id (IndexedDB `planit/photos`, 최대 10장)
+ *
  * @property {string}  createdAt   - ISO 문자열
  * @property {string}  updatedAt
  */
@@ -171,6 +183,11 @@
   weekStartsOn: 0,            // 0=일요일, 1=월요일
   defaultDurationMin: 60,     // 빠른 입력 시 종료 시각이 없을 때 기본 길이
   defaultCategoryId: 'personal',
+  defaultEventReminder: 10,   // 새 시간 일정 기본 알림 (분 전, null = 없음)
+  defaultAllDayReminder: null,// 새 종일 일정 기본 알림 (-540 = 당일 오전 9시)
+  notifications: false,       // 휴대폰·PC(OS) 알림 — 권한을 받은 뒤 true
+  reminderSound: true,
+  showHolidays: true,         // 대한민국 공휴일 표시
   dayStartHour: 0,            // 타임라인 표시 범위
   dayEndHour: 24,
   filters: { categories: ['work','personal','study'], types: ['event','task'], hideDone: false }
@@ -185,10 +202,13 @@
 | `planit:items` | `Item[]` JSON |
 | `planit:categories` | `Category[]` JSON |
 | `planit:settings` | Settings JSON |
+| `planit:reminderState` | 알림 실행 기록 `{ lastCheck, fired: { 키: 울린 시각 } }` (중복·놓친 알림 판정) |
+| IndexedDB `planit` › `photos` | 메모 사진 `{ id, blob(1600px JPEG), thumb(320px), width, height, createdAt }` |
 
 - 앱 시작 시 `planit:schema`를 확인하고 필요하면 `migrations[n]()` 순차 실행
 - 저장은 변경 발생 시 디바운스(300ms) 후 일괄 기록
-- JSON 내보내기/가져오기 기능 제공 (백업용)
+- JSON 내보내기/가져오기 기능 제공 (백업용, 사진은 `photos: [{ id, data(dataURL) }]`로 함께)
+- 사진은 용량 때문에 localStorage가 아닌 IndexedDB. 어떤 항목도 쓰지 않는 사진은 앱 시작 시 정리 (올린 지 하루 지난 것만 — 저장 전·실행 취소 대비)
 - `localStorage` 접근 실패(사생활 보호 모드 등) 시 메모리 모드로 동작하고 경고 배너 표시
 
 ---
@@ -222,21 +242,30 @@ Planit/
 │  ├─ layout.css        # 헤더, 사이드바, 메인 영역
 │  ├─ day-view.css
 │  ├─ month-view.css
-│  └─ components.css    # 모달, 칩, 토스트, 빠른 입력창
+│  ├─ components.css    # 모달, 칩, 토스트, 빠른 입력창
+│  └─ features.css      # 알림 배너·알림 칩, 사진, 검색, 공휴일, 설정
 ├─ js/
-│  ├─ main.js           # 앱 부트스트랩, 라우팅(해시), 단축키
-│  ├─ store.js          # 상태, 액션, 구독, 영속화
+│  ├─ main.js           # 앱 부트스트랩, 라우팅(해시), 단축키, 서비스 워커 등록
+│  ├─ store.js          # 상태, 액션, 구독, 영속화, 검색
 │  ├─ storage.js        # localStorage 래퍼 + 마이그레이션
 │  ├─ models.js         # Item/Category 생성·검증 함수
+│  ├─ recurrence.js     # 반복 규칙 정규화·회차 펼치기·보기 목록·설명 문구
+│  ├─ reminders.js      # 알림 시각 계산·문구·변환 (순수 함수)
+│  ├─ holidays.js       # 대한민국 공휴일 + 대체공휴일 계산
+│  ├─ ics.js            # .ics(iCalendar) 내보내기 — RRULE·EXDATE·VALARM
+│  ├─ photos.js         # 메모 사진 IndexedDB 저장·축소·정리·백업
 │  ├─ utils/
 │  │  ├─ date.js        # 날짜 유틸 (addDays, startOfWeek, format 등)
 │  │  ├─ dom.js         # h() 요소 생성 헬퍼, 이벤트 위임, 포커스 유지
+│  │  ├─ download.js    # 파일 내려받기
 │  │  └─ format.js      # describeWhen() 등 표시용 문자열
 │  ├─ parser/
 │  │  ├─ index.js       # parseQuickInput(text, now) 진입점
 │  │  ├─ date-rules.js
 │  │  ├─ time-rules.js
-│  │  └─ category-rules.js
+│  │  ├─ category-rules.js
+│  │  ├─ recurrence-rules.js  # 매주 월요일, 격주, 매월 15일 …
+│  │  └─ extra-rules.js       # @장소, "10분 전 알림"
 │  ├─ views/
 │  │  ├─ day-view.js
 │  │  ├─ month-view.js
@@ -250,15 +279,24 @@ Planit/
 │     ├─ mini-calendar.js
 │     ├─ someday-tasks.js   # 마감 없는 할일 목록
 │     ├─ settings-panel.js  # 설정 + 내보내기/가져오기
+│     ├─ time-picker.js     # 시간 선택 (PC 목록 / 모바일 휠)
+│     ├─ scope-dialog.js    # 반복 일정 수정·삭제 범위 선택
+│     ├─ reminder-service.js # 알림 타이머·배너·소리·진동
+│     ├─ notifications.js   # 시스템(OS) 알림 지원 여부·권한·표시
+│     ├─ photo-viewer.js    # 사진 크게 보기
+│     ├─ search-dialog.js   # 검색
 │     └─ toast.js
 ├─ tests/
 │  ├─ runner.js         # 브라우저·Node 공용 간이 테스트 러너
 │  ├─ test.html         # 브라우저에서 테스트 실행
 │  ├─ run-node.js       # Node에서 테스트 실행 (npm test)
 │  ├─ parser.test.js
-│  └─ date.test.js      # 날짜 유틸 + 겹침 배치 + 모델
+│  ├─ date.test.js      # 날짜 유틸 + 겹침 배치 + 모델
+│  ├─ recurrence.test.js # 반복 펼치기·보기·수정/삭제 범위
+│  └─ features.test.js  # 알림·공휴일·.ics·장소/알림 파싱·검색
 ├─ icons/               # 앱 아이콘 (svg, 180/192/512 png)
 ├─ manifest.webmanifest # 홈 화면 추가용
+├─ sw.js                # 서비스 워커: 시스템 알림 + 오프라인(네트워크 우선)
 └─ package.json         # 테스트/로컬 서버 스크립트만 (빌드 없음)
 ```
 
@@ -408,6 +446,7 @@ const unsubscribe = store.subscribe((state, changedKeys) => { ... })
 | 탐색 | 하단 탭바. 일간 탭을 다시 누르면 오늘로 이동 |
 | 날짜 이동 | 메인 뷰 좌우 스와이프 (60px 이상, 가로 우세, 1초 이내). `touch-action: pan-y`로 브라우저가 가로 제스처를 가져가지 않게 함 |
 | 편집 창 | 전체 화면 시트, 상단 `취소`/`저장`. 기존 항목을 열 때는 자동 포커스 안 함(키보드가 가리지 않게) |
+| 시간 선택 | 네이티브 `<input type="time">`(무한 반복 휠/열) 대신 자체 구현(`components/time-picker.js`). 화면 표시는 `오전 9:00` 형식, 폼 값은 숨김 input에 `HH:mm`.<br>**PC**: `오전 12:00`~`오후 11:45` 15분 간격 목록(반복 없음), 현재 값을 가운데로 스크롤, 편집 창 안에서 잘리지 않게 위/아래 자동 선택. `15:30`·`1530`·`3시 반`·`오후 2시` 직접 입력 가능.<br>**모바일**: 필드 아래로 펼쳐지는 오전/오후 · 시(12,1…11) · 분(5분 단위) 3열 휠. 스크롤 스냅 + 가운데 선택 띠, 끝에서 멈춤(반복 없음), 돌리는 즉시 값 반영, `완료` 또는 바깥을 누르면 접힘.<br>공통: 종료 시각은 같은 날이면 시작 이후 기준 길이(`1시간 30분`) 표시, 할일 마감 시각은 `시각 없음`/`시각 지우기` 지원 |
 | 입력 | 빠른 입력을 `<form>`으로 감싸 모바일 키보드의 완료 키도 처리, 입력 중 `추가` 버튼 표시. 입력창 16px 이상(iOS 확대 방지) |
 | 터치 영역 | 목록 행 52px, 입력창 44px, 체크박스 22px 이상 |
 | 안전 영역 | `viewport-fit=cover` + `env(safe-area-inset-*)`로 노치·홈 인디케이터 회피 |
@@ -417,6 +456,129 @@ const unsubscribe = store.subscribe((state, changedKeys) => { ... })
 
 **지원 브라우저**: iOS Safari 16.4+, Android Chrome 111+, 최신 데스크톱 브라우저
 (파서의 정규식 lookbehind, `color-mix()`, `Array.prototype.with` 사용)
+
+### 6.6 반복 일정·할일
+
+Google Calendar(일정) / Google Tasks(할일) 방식. 일정과 할일 모두 반복할 수 있다.
+**기준 날짜(anchor)**: 일정은 시작일, 할일은 마감일 (`anchorOf()`). 반복 할일은 마감일이 필수(비어 있으면 오늘).
+
+**규칙 (`js/recurrence.js`, iCalendar RRULE 부분집합)**
+```js
+recurrence: {
+  freq: 'daily' | 'weekly' | 'monthly' | 'yearly',
+  interval: 1~99,            // N일/주/개월/년마다
+  byDay?: [0~6],             // weekly: 요일들 (없으면 시작일 요일)
+  bySetPos?: 1|2|3|4|-1,     // monthly: N번째(-1=마지막) "시작일 요일" (없으면 매월 시작일과 같은 날짜)
+  until?: 'YYYY-MM-DD',      // 이 날짜까지(포함)  ─┐ 둘 중 하나
+  count?: number,            // N회               ─┘
+}
+```
+- 기준(anchor)은 원본 시작일: 매월 N일 · N번째 요일 · 매년 날짜 모두 시작일에서 결정
+- 31일 반복은 31일이 없는 달을, 2월 29일 매년 반복은 평년을 건너뜀
+- 매주 반복의 주 계산은 RRULE 기본값(월요일 시작 주)
+
+**저장과 조회**
+- 원본(series) 1개만 저장 → `selectItemsInRange()`가 보이는 기간만 회차(occurrence)로 펼침. 무한 반복도 데이터가 늘지 않음
+- count가 없으면 조회 구간 근처로 건너뛰어 계산 (10년 뒤를 봐도 빠름)
+- 회차 id = `원본id::YYYY-MM-DD` → `store.getItem()`이 해석. 회차 객체는 원본을 복사해 start/end만 그 날짜로 바꾼 것 (`seriesId`, `occurrenceDate` 추가)
+
+**수정 창 "반복" 선택 상자** — 시작 날짜에 맞춰 문구가 바뀜 (예: 2026-11-20 금)
+
+| 보기 | 규칙 |
+|------|------|
+| 반복 안 함 | — |
+| 매일 | daily |
+| 매주 금요일 | weekly [금] |
+| 매월 셋째 금요일 | monthly bySetPos 3 (5번째 주면 생략) |
+| 매월 마지막 금요일 | monthly bySetPos -1 (마지막 주일 때만) |
+| 매월 20일 | monthly |
+| 매년 11월 20일 | yearly |
+| 주중 매일 (월~금) | weekly [월~금] |
+| 맞춤… | 간격 + 단위, 요일 다중 선택(주), 날짜/N번째 요일(월), 종료: 없음/날짜/N회 |
+
+저장된 규칙이 보기 중 하나와 같으면 그 보기, 아니면 "맞춤…"을 선택하고 패널을 채워 보여준다.
+
+**회차 수정·삭제 범위** (`components/scope-dialog.js`)
+
+| 범위 | 수정 | 삭제 |
+|------|------|------|
+| 이 일정 | 원본 `exdates`에 날짜 추가 + 바뀐 내용으로 독립 일정 생성(`recurringId`, `originalDate`) | `exdates`에 날짜 추가 |
+| 이 일정 및 향후 일정 | 원본을 전날까지(`until`)로 끝내고 그 회차부터 새 원본 생성. 규칙을 그대로 두면 `count`는 남은 횟수만 이어감 | 원본을 전날까지로 끝냄 |
+| 모든 일정 | 그 회차에서 바꾼 날짜·시각 차이만큼 원본 전체를 이동 | 원본 + "이 일정만" 수정한 회차까지 삭제 |
+
+- 첫 회차에서 "이 일정 및 향후"를 고르면 "모든 일정"과 같게 처리
+- 반복 규칙을 바꾼 경우 "이 일정"은 고를 수 없음 (Google과 동일)
+- 모든 경우 실행 전 상태를 스냅샷으로 보관 → 토스트의 `실행 취소`로 되돌림
+
+**화면**: 반복 회차는 칩·타임라인 블록·목록에 `↻` 표시, 툴팁/목록에 `↻ 매주 월요일` 설명. 수정 창 제목은 "반복 일정 수정" / "반복 할일 수정", 범위 선택 문구도 "이 할일 / 이 할일 및 향후 할일 / 모든 할일"로 바뀐다.
+
+#### 반복 할일 (Google Tasks 방식)
+
+- 원본 1개 + 회차별 완료 기록 `doneDates: { "YYYY-MM-DD": 완료시각 }`. 원본 자체의 `done`은 쓰지 않는다
+- 회차 객체: `due`를 그 날짜로(시각 유지), `done`/`doneAt`은 `doneDates`에서
+- **지금 해야 할 회차** (`currentOccurrence(series, today)`) — 할일 목록과 오늘의 "지연"에 쓰인다
+  1. 오늘(포함) 이전 가장 최근 회차가 미완료면 그 회차 (오늘 이전이면 **지연**)
+  2. 완료했거나 없으면 오늘 이후 첫 미완료 회차
+  3. 그보다 오래된 미완료 회차는 쌓아 두지 않는다 → 매일 할일을 며칠 빼먹어도 지연은 1개
+  4. 반복이 끝났고 모두 완료했으면 없음
+- 할일 뷰: 반복 할일마다 지금 해야 할 회차 1개 + "완료됨"에 최근 완료한 회차들
+- 일간·월간 뷰: 날짜마다 회차가 보이고 각각 체크 가능 (완료 숨기기 필터도 회차 단위)
+- 체크박스 = 그 회차만 완료/해제 (`setOccurrenceDone`). 수정 창에서 **완료만 바꿔 저장**하면 범위를 묻지 않는다
+- 범위 수정·삭제는 일정과 같고, 완료 기록은 함께 따라간다
+  - 이 할일: 그 회차의 완료 기록은 독립 할일의 `done`으로 옮김
+  - 이 할일 및 향후: 그날 이후 완료 기록은 새 원본으로, 이전은 기존 원본에 남김
+  - 모든 할일: 날짜를 옮기면 완료·제외 날짜도 같은 만큼 이동
+
+**제스처 주의**: 모바일에서 좌우 스와이프가 브라우저 뒤로 가기로 처리되지 않도록, 가로 제스처로 판정되면 `touchmove`에서 `preventDefault()` (CSS `overscroll-behavior-x`만으로는 부족)
+
+### 6.7 알림 · 장소 · 메모 사진 · 공휴일 · 검색 (네이버 캘린더 참고)
+
+#### 알림
+| 항목 | 보기 (수정 창 "+ 알림 추가") | 저장값 `reminders` |
+|------|------------------------------|---------------------|
+| 시간 일정 / 마감 시각 있는 할일 | 정시, 5·10·15·30분 전, 1·2시간 전, 1·2일 전, 1주 전 | 기준 시각(시작·마감) − N분 → `[10, 60]` |
+| 종일 일정 / 날짜만 있는 할일 | 당일 오전 9시, 1·2일 전 오전 9시, 1주 전 오전 9시 | 그날 0시 − N분 → 당일 9시 `-540`, 1일 전 9시 `900` |
+
+- 한 항목에 최대 5개, 칩(🔔 10분 전 ✕)으로 표시. 마감 없는 할일은 알림 불가
+- 종일 ↔ 시간을 바꾸면 비슷한 뜻으로 변환 (10분 전 ↔ 당일 오전 9시, 1일 전 ↔ 1일 전 오전 9시)
+- 기본 알림(설정): 새 시간 일정 10분 전, 종일 없음, 할일 없음. 빠른 입력에 알림 표현이 없으면 기본 알림, `알림 없이`면 없음
+- 반복 항목은 회차마다, 완료한 할일(회차)은 울리지 않음
+
+**실행 (`reminder-service.js`)**
+1. 다음 알림 시각까지 `setTimeout` (최대 15분 간격으로 다시 계산), 항목 변경·매분 시계·화면 복귀 때도 확인
+2. `(마지막 확인, 지금]` 사이 알림을 울림 → 백그라운드였던 동안 놓친 알림(12시간 이내)도 이어서 표시
+3. 울린 알림은 `planit:reminderState.fired`에 키(`회차id|분|기준시각`)로 기록 → 새로고침·여러 탭 중복 방지. 시각을 바꾸면 키가 달라져 다시 울림
+4. 표시: ① 화면 위 알림 배너(보기/닫기, 5분 뒤 자동으로 닫힘) ② 앱을 보고 있지 않으면 시스템 알림 ③ 소리(Web Audio 짧은 신호음)·진동
+
+**시스템(OS) 알림의 제약** — 서버 없는 웹 앱이므로
+| 조건 | 결과 |
+|------|------|
+| `http://192.168.x.x` 등 HTTPS가 아닌 주소 | 시스템 알림·서비스 워커 불가 → 앱 안 배너만 |
+| iPhone Safari 탭 | 불가. 홈 화면에 추가한 앱(iOS 16.4+)에서만 |
+| Android Chrome | `new Notification()` 금지 → 서비스 워커 `showNotification()` 사용 |
+| 앱(탭)을 완전히 닫음 | 울리지 않음 (Web Push 서버가 필요) |
+
+→ 꼭 받아야 하는 알림은 **"캘린더 앱에 추가"(.ics, VALARM 포함)** 로 기기 기본 캘린더에 맡긴다. 처음 알림 있는 항목을 저장하면 한 번만 "알림 켜기" 토스트로 권한을 권한다.
+
+#### 장소
+- `location` 문자열. 수정 창에 "지도" 버튼 → `https://map.naver.com/p/search/{장소}` 새 창
+- 목록 행 `📍 장소`, 타임라인 블록 `15:00–16:00 · 장소`, 툴팁·검색 대상
+
+#### 메모 사진
+- 수정 창 "사진" 칸: `+ 사진` → `<input type="file" accept="image/*" multiple>` (모바일은 카메라/앨범 선택)
+- 저장 전에 긴 변 1600px JPEG(품질 0.85) + 320px 썸네일로 줄여 IndexedDB에 저장 (EXIF 회전 반영, 투명 배경은 흰색)
+- 썸네일 누르면 전체 화면 보기 (←/→, 좌우 스와이프, 아래로 밀어 닫기), ✕로 항목에서 빼기
+- 목록 행에 `📷 2`. 복제·"이 회차만" 수정 시 같은 사진 id를 공유 (정리는 참조 기준이라 안전)
+
+#### 공휴일 (`holidays.js`)
+- 양력 고정 공휴일 + 음력 명절(설날·부처님오신날·추석)의 양력 날짜 표(2024–2030) + 선거일·임시공휴일 표
+- 대체공휴일 규칙 계산: 삼일절·어린이날·광복절·개천절·한글날·부처님오신날·성탄절은 토·일 또는 겹침, 설·추석은 일요일 또는 겹침 → 다음 첫 평일
+- 월간: 날짜 빨간색 + 이름, 모바일은 날짜 색 + 아래 목록 제목 옆 이름 / 일간: 종일 줄에 공휴일 표시 / 미니 캘린더: 빨간색
+
+#### 검색 · 복제 · 캘린더로 보내기
+- 검색(`F`, 헤더 🔍): 제목·메모·장소, 여러 단어는 모두 포함. 필터와 무관하게 전체에서. 반복은 다가오는 회차 하나. 정렬: 다가오는 순 → 지난 항목 최근 순 → 날짜 없는 할일. `Enter`는 첫 결과 열기
+- 복제: 수정 창의 현재 내용으로 새 항목 만들기 (저장해야 추가)
+- 캘린더 앱에 추가: 항목(반복이면 반복 전체)을 .ics로. 설정에서 전체 .ics 내보내기도 가능
 
 ---
 
@@ -438,6 +600,9 @@ parseQuickInput(text, now = new Date())
  * @property {string}  [start] @property {string} [end] @property {boolean} [allDay]
  * @property {string}  [due]
  * @property {string}  [categoryId]
+ * @property {Recurrence|null} recurrence
+ * @property {string|null} location        // "@장소"
+ * @property {number[]|null} reminders     // "10분 전 알림" — null이면 기본 알림
  * @property {Array<{start:number,end:number,kind:string}>} tokens  // 미리보기 하이라이트용
  * @property {string[]} warnings   // 예: "과거 시각입니다"
  */
@@ -523,6 +688,40 @@ parseQuickInput(text, now = new Date())
 
 `tests/parser.test.js`에 위 표를 그대로 데이터 기반 테스트로 작성한다.
 
+### 7.4 반복 표현 (`parser/recurrence-rules.js`)
+
+날짜 규칙보다 **먼저** 실행한다 ("매주 월요일"의 "월요일"이 단일 날짜로 잡히지 않게).
+
+| 입력 | 규칙 | 첫 회차 (기준 11/14 토) |
+|------|------|-------------------------|
+| `매일 아침 7시 운동` | 매일 | 오늘 07:00 |
+| `매주 월요일 9시 팀 회의` / `매주 월수금 7시 수영` | 매주 (요일) | 가장 가까운 해당 요일 (11/16) |
+| `격주 금요일 오후 3시` / `3주마다 화요일` | N주마다 (요일) | 11/20 |
+| `평일 9시 스탠드업` | 주중 매일 | 11/16(월) |
+| `매월 15일 월세` | 매월 N일 | 11/15 — 날짜 자체가 규칙이므로 다른 날짜보다 우선 |
+| `매월 마지막 금요일 회고` / `매달 셋째 주 화요일` | 매월 N번째 요일 | 11/27 |
+| `매년 3월 1일 기념일` | 매년 | 2027/3/1 |
+| `3일마다`, `2개월마다`, `매주`, `매월`, `매년` | 간격만 | 다른 날짜 표현 또는 오늘 |
+| `다음주 수요일부터 매일 8시 조깅` | 매일 | 지정한 날짜(11/18) |
+| `매주 월요일 9시 회의 12월 31일까지` | 매주 월 · 12/31까지 | 반복 + `날짜까지` → 반복 종료일 |
+
+- 반복 + 할일 표현(`할일`, `까지`, `마감`, `- ` 접두어) → **반복 할일**, 첫 회차 날짜가 마감일 (`매주 금요일까지 주간 보고서 제출`, `- 매일 영어 단어`)
+- 할일 표현 없이 시간도 없으면 **종일 반복 일정** (`매월 15일 월세`)
+- 반복 항목은 첫 회차가 오늘 이미 지났어도 "지난 시각/마감" 경고를 띄우지 않는다
+
+### 7.5 장소·알림 표현 (`parser/extra-rules.js`)
+
+시간·기간·날짜 규칙보다 **먼저** 실행한다 ("1시간 전 알림"의 "1시간"이 일정 길이로, "1일 전"의 "1일"이 날짜로 잡히지 않게).
+
+| 입력 | 결과 |
+|------|------|
+| `내일 오후 3시 회의 @강남역` | 장소 "강남역" (`@` 뒤 공백 전까지, 이메일 주소의 `@`는 제외) |
+| `10분 전 알림`, `1시간 전에 알려줘`, `알림 30분 전` | 알림 10 / 60 / 30분 전 (여러 개 가능) |
+| `하루 전 알림`, `이틀 전 알림`, `정시 알림` | 1일 / 2일 전, 정시 |
+| `12월 31일 종일 휴가 하루 전 알림` | 종일이므로 "1일 전 오전 9시" (`900`) |
+| `알림 없이` | 알림 없음 (기본 알림도 안 씀) |
+| 알림 표현 없음 | `reminders: null` → 저장 시 설정의 기본 알림 |
+
 ---
 
 ## 8. 날짜 유틸 (`utils/date.js`)
@@ -604,9 +803,10 @@ formatKo(date, 'M/D(ddd)') → "11/15(일)"
 
 ## 13. 향후 확장
 
-- **반복 일정**: `recurrence: { freq: 'daily'|'weekly'|'monthly', interval, until, byWeekday }` 필드 추가, 조회 시 전개(expand). 파서에 `매주 월요일`, `매일` 규칙 추가
+- ~~반복 ICS 내보내기~~, ~~알림~~, ~~PWA 오프라인~~ → 적용됨 (6.7)
+- **앱을 닫아도 오는 알림**: Web Push 서버(VAPID) 필요 — 서버를 두게 되면 구독 정보를 저장하고 알림 시각에 푸시
 - **주간 뷰**: 일간 타임라인을 7열로 확장 (겹침 알고리즘 재사용)
 - **드래그 앤 드롭**: 타임라인에서 일정 이동/길이 조절, 월간 뷰 날짜 간 이동
-- **알림**: Notification API + Service Worker
-- **PWA 오프라인**: manifest는 적용됨 → Service Worker로 오프라인 캐시 추가
-- **동기화**: IndexedDB 전환 후 서버/구글 캘린더 연동 (ICS 내보내기 우선)
+- **음력 표시·기념일(D-day)**: 음양력 변환 표 필요
+- **.ics 가져오기**: 다른 캘린더에서 옮겨 오기 (RRULE 부분집합만)
+- **동기화**: 서버/구글 캘린더 연동

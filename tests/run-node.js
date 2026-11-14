@@ -2,6 +2,8 @@
 import { run } from './runner.js';
 import './date.test.js';
 import './parser.test.js';
+import './recurrence.test.js';
+import './features.test.js';
 
 const results = await run();
 let failed = 0;

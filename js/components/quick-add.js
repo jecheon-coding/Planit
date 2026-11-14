@@ -3,11 +3,13 @@ import { h } from '../utils/dom.js';
 import { parseQuickInput } from '../parser/index.js';
 import { categoryColor } from '../models.js';
 import { describeWhen, typeLabel } from '../utils/format.js';
+import { describeRecurrence, anchorOf } from '../recurrence.js';
 import { parseLocal } from '../utils/date.js';
+import { describeReminder, isDateOnly, defaultReminders } from '../reminders.js';
 
 const DEBOUNCE_MS = 100;
 const KIND_LABEL = {
-  date: '날짜', time: '시간', duration: '기간', allday: '종일', category: '카테고리', type: '종류',
+  date: '날짜', time: '시간', duration: '기간', allday: '종일', category: '카테고리', type: '종류', repeat: '반복', location: '장소', reminder: '알림',
 };
 
 export function createQuickAdd({ store, root, openModal, toast }) {
@@ -61,6 +63,10 @@ export function createQuickAdd({ store, root, openModal, toast }) {
       end: r.end ?? undefined,
       allDay: r.allDay,
       due: r.due,
+      recurrence: r.recurrence,
+      location: r.location ?? '',
+      // null이면 설정의 기본 알림을 쓴다 (store.addItem)
+      reminders: r.reminders ?? undefined,
     };
   }
 
@@ -96,6 +102,9 @@ export function createQuickAdd({ store, root, openModal, toast }) {
           cat?.name ?? draft.categoryId,
           r.categorySource === 'keyword' ? h('small', {}, ' (추론)') : null,
           !r.categoryId && settings.defaultCategoryId ? h('small', {}, ' (기본)') : null),
+        r.recurrence ? h('span', { class: 'qa-pill repeat' }, `↻ ${describeRecurrence(r.recurrence, anchorOf(draft))}`) : null,
+        r.location ? h('span', { class: 'qa-pill' }, `📍 ${r.location}`) : null,
+        reminderPill(draft, settings),
         h('span', { class: 'qa-title' }, `“${r.title || (r.type === 'task' ? '새 할일' : '새 일정')}”`)),
       r.tokens.length
         ? h('div', { class: 'qa-source' }, h('span', { class: 'muted' }, '인식: '), highlighted(input.value, r.tokens))
@@ -106,6 +115,16 @@ export function createQuickAdd({ store, root, openModal, toast }) {
         h('kbd', {}, 'Esc'), ' 취소'),
     ];
     preview.replaceChildren(...parts.filter(Boolean));
+  }
+
+  /** 알림 미리보기: 직접 쓴 알림, 없으면 기본 알림 (기본) */
+  function reminderPill(draft, settings) {
+    if (draft.type === 'task' && !draft.due) return null;
+    const list = draft.reminders ?? defaultReminders(draft, settings);
+    if (!list.length) return draft.reminders ? h('span', { class: 'qa-pill' }, '🔕 알림 없음') : null;
+    const dateOnly = isDateOnly(draft);
+    return h('span', { class: 'qa-pill' }, `🔔 ${list.map((m) => describeReminder(m, dateOnly)).join(', ')}`,
+      draft.reminders ? null : h('small', {}, ' (기본)'));
   }
 
   function commit({ detailed = false } = {}) {
@@ -120,7 +139,8 @@ export function createQuickAdd({ store, root, openModal, toast }) {
     const item = store.addItem(draft);
     const dateStr = (item.start ?? item.due)?.slice(0, 10);
     if (dateStr) store.setSelectedDate(parseLocal(dateStr));
-    toast(`추가했습니다: ${item.title} · ${describeWhen(item)}`, {
+    const repeat = item.recurrence ? ` · ↻ ${describeRecurrence(item.recurrence, anchorOf(item))}` : '';
+    toast(`추가했습니다: ${item.title} · ${describeWhen(item)}${repeat}`, {
       actionLabel: '실행 취소',
       onAction: () => store.deleteItem(item.id),
     });

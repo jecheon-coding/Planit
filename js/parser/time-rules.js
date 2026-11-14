@@ -122,6 +122,41 @@ export function extractTimes(ctx) {
   return { startMin, endMin: null };
 }
 
+const pad2 = (n) => String(n).padStart(2, '0');
+
+/**
+ * 시간 선택 입력창에 직접 친 값을 "HH:mm"으로 변환. 빈 값은 '', 해석 불가는 null.
+ * 숫자만 쓰면 24시간제로 본다: "9" → 09:00, "930" → 09:30, "1530" → 15:30, "15:30" → 15:30
+ * 한국어 표현은 빠른 입력과 같은 규칙: "3시 반" → 15:30, "오전 9시" → 09:00, "오후 3" → 15:00
+ */
+export function parseTimeInput(text) {
+  const s = String(text ?? '').trim()
+    .replace(/[０-：]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+  if (!s) return '';
+  let min = null;
+  let m = /^(\d{1,2})(?::?(\d{2}))?$/.exec(s);
+  if (m) {
+    const h = +m[1];
+    const mm = m[2] != null ? +m[2] : 0;
+    if (h <= 23 && mm <= 59) min = h * 60 + mm;
+  } else if ((m = new RegExp(`^(${MERIDIEM})\\s*(\\d{1,2})(?::(\\d{2}))?$`).exec(s))) {
+    min = toMinutes({ h: +m[2], m: m[3] != null ? +m[3] : 0, mer: m[1] });
+  } else {
+    const [token] = findTimeTokens(s);
+    if (token && token.index === 0 && s.slice(token.length).trim() === '') min = toMinutes(token);
+  }
+  if (min == null || min < 0 || min >= 1440) return null;
+  return `${pad2(Math.floor(min / 60))}:${pad2(min % 60)}`;
+}
+
+/** 분 → "1시간 30분" */
+export function formatDuration(min) {
+  if (min < 60) return `${min}분`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m ? `${h}시간 ${m}분` : `${h}시간`;
+}
+
 /** 기간(분)을 추출하고 ctx에서 소비한다. 없으면 null */
 export function extractDuration(ctx) {
   const hm = DURATION_HOUR_RE.exec(ctx.rest);

@@ -4,6 +4,7 @@ import {
   getMonthGrid, addDays, addMonths, startOfMonth, toLocalDateStr, parseLocal, isSameDay, formatKo, WEEKDAYS_KO,
 } from '../utils/date.js';
 import { eachItemDay } from '../models.js';
+import { holidayName } from '../holidays.js';
 
 export function createMiniCalendar({ store, root }) {
   let cursor = startOfMonth(store.getState().selectedDate);
@@ -49,12 +50,15 @@ export function createMiniCalendar({ store, root }) {
             if (isSameDay(d, now)) cls.push('is-today');
             if (isSameDay(d, selectedDate)) cls.push('is-selected');
             if (busy.has(ds)) cls.push('has-items');
+            const holiday = settings.showHolidays ? holidayName(ds) : null;
+            if (holiday) cls.push('is-holiday');
             return h('button', {
               type: 'button',
               class: cls.join(' '),
               'data-date': ds,
               'data-focus-key': `mini:${ds}`,
-              'aria-label': formatKo(d, 'M월 D일 ddd요일') + (busy.has(ds) ? ', 항목 있음' : ''),
+              title: holiday,
+              'aria-label': formatKo(d, 'M월 D일 ddd요일') + (holiday ? ` ${holiday}` : '') + (busy.has(ds) ? ', 항목 있음' : ''),
               'aria-current': isSameDay(d, selectedDate) ? 'date' : null,
             }, d.getDate());
           })),

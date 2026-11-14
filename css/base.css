@@ -53,11 +53,13 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
-html, body { height: 100%; }
+html, body { height: 100%; overscroll-behavior-x: none; }
 
 /* 더블탭 확대 지연 제거, 가로 회전 시 글자 자동 확대 방지 */
 html {
   touch-action: manipulation;
+  /* 좌우 스와이프(날짜 이동)가 브라우저의 뒤로/앞으로 가기로 처리되지 않게 */
+  overscroll-behavior-x: none;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }

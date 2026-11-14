@@ -16,6 +16,9 @@ import { createFilterBar } from './components/filter-bar.js';
 import { createMiniCalendar } from './components/mini-calendar.js';
 import { createSomedayTasks } from './components/someday-tasks.js';
 import { createSettingsPanel } from './components/settings-panel.js';
+import { createSearchDialog } from './components/search-dialog.js';
+import { createReminderService } from './components/reminder-service.js';
+import { gcPhotos, photosSupported } from './photos.js';
 
 migrate();
 const store = createStore();
@@ -23,6 +26,22 @@ initToast($('#toast-root'));
 
 const modal = createItemModal({ store, dialog: $('#item-modal'), toast: showToast });
 const openModal = (opts) => modal.open(opts);
+const search = createSearchDialog({ store, openModal });
+
+/** id(회차 id 포함)로 항목 수정 창 열기 — 알림 배너·시스템 알림에서 사용 */
+function openItemById(id) {
+  const item = id ? store.getItem(id) : null;
+  if (!item) {
+    if (id) showToast('항목을 찾을 수 없습니다. 삭제되었을 수 있습니다.', { tone: 'error' });
+    return;
+  }
+  const day = (item.start ?? item.due)?.slice(0, 10);
+  if (day) store.setSelectedDate(parseLocal(day));
+  if (modal.isOpen()) modal.close();
+  openModal({ item });
+}
+
+const reminders = createReminderService({ store, root: $('#alarm-root'), openItem: openItemById });
 
 const views = {
   day: createDayView({ store, openModal }),
@@ -33,7 +52,9 @@ const quickAdd = createQuickAdd({ store, root: $('#quick-add'), openModal, toast
 const filterBar = createFilterBar({ store, root: $('#filter-bar') });
 const miniCal = createMiniCalendar({ store, root: $('#mini-calendar') });
 const someday = createSomedayTasks({ store, root: $('#someday-tasks'), openModal });
-const settingsPanel = createSettingsPanel({ store, root: $('#settings-panel'), toast: showToast });
+const settingsPanel = createSettingsPanel({
+  store, root: $('#settings-panel'), toast: showToast, onTestReminder: () => reminders.test(),
+});
 
 const mainEl = $('#main-view');
 const dateLabel = $('#date-label');
@@ -166,6 +187,7 @@ $('#next-btn').addEventListener('click', () => navigate(1));
 $('#today-btn').addEventListener('click', goToday);
 $('#new-btn').addEventListener('click', newItem);
 $('#fab').addEventListener('click', newItem);
+$('#search-btn').addEventListener('click', () => search.open());
 
 document.querySelectorAll('[role="tab"][data-view]').forEach((tab) => {
   tab.addEventListener('click', () => store.setView(tab.dataset.view));
@@ -213,8 +235,18 @@ mainEl.addEventListener('touchstart', (e) => {
     return;
   }
   const t = e.touches[0];
-  touch = { x: t.clientX, y: t.clientY, time: Date.now() };
+  touch = { x: t.clientX, y: t.clientY, time: Date.now(), horizontal: null };
 }, { passive: true });
+// 가로로 미는 제스처로 판정되면 브라우저 기본 동작(뒤로/앞으로 가기 스와이프)을 막는다.
+// 세로 스크롤은 건드리지 않음. CSS overscroll-behavior만으로는 브라우저에 따라 막히지 않는다.
+mainEl.addEventListener('touchmove', (e) => {
+  if (!touch || e.touches.length !== 1) return;
+  const t = e.touches[0];
+  const dx = t.clientX - touch.x;
+  const dy = t.clientY - touch.y;
+  if (touch.horizontal == null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) touch.horizontal = Math.abs(dx) > Math.abs(dy);
+  if (touch.horizontal && e.cancelable) e.preventDefault();
+}, { passive: false });
 mainEl.addEventListener('touchcancel', () => { touch = null; }, { passive: true });
 mainEl.addEventListener('touchend', (e) => {
   if (!touch) return;
@@ -234,12 +266,14 @@ function isTyping(target) {
 
 document.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
-  if (modal.isOpen() || isTyping(e.target)) return;
+  if (modal.isOpen() || search.isOpen() || isTyping(e.target)) return;
+  if (document.querySelector('dialog[open]')) return; // 사진 보기 등 다른 창이 떠 있음
   switch (e.key) {
     case '/':
       e.preventDefault();
       quickAdd.focus();
       break;
+    case 'f': case 'F': e.preventDefault(); search.open(); break;
     case 'd': case 'D': store.setView('day'); break;
     case 'm': case 'M': store.setView('month'); break;
     case 'l': case 'L': store.setView('tasks'); break;
@@ -264,6 +298,31 @@ if (!isPersistent()) $('#storage-warning').hidden = false;
 applyHash();
 store.subscribe(render);
 render(store.getState(), ['*']);
+reminders.start();
+
+// 서비스 워커: 시스템 알림 표시(안드로이드는 필수) + 오프라인 실행. HTTPS·localhost에서만 동작
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register('./sw.js').catch(() => { /* 없어도 앱은 동작 */ });
+  // 시스템 알림을 눌렀을 때 (앱이 열려 있던 경우)
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data?.type === 'open-item') openItemById(e.data.id);
+  });
+}
+
+// 시스템 알림을 눌러 앱이 새로 열린 경우: ?open=항목id
+const openParam = new URLSearchParams(location.search).get('open');
+if (openParam) {
+  history.replaceState(null, '', location.pathname + location.hash);
+  setTimeout(() => openItemById(openParam), 0);
+}
+
+// 어떤 항목도 쓰지 않는 사진 정리 (실행 취소 대비로 하루 지난 것만)
+if (photosSupported()) {
+  setTimeout(() => {
+    const keep = new Set(store.getState().items.flatMap((i) => i.photos ?? []));
+    gcPhotos(keep).catch(() => {});
+  }, 3000);
+}
 
 // 매분 정각에 맞춰 시계 갱신
 setTimeout(() => {

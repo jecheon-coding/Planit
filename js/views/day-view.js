@@ -6,7 +6,10 @@ import {
 import { categoryColor } from '../models.js';
 import { describeWhen } from '../utils/format.js';
 import { layoutColumns } from './layout-overlap.js';
-import { eventChip, taskChip, bindItemEvents } from './chips.js';
+import { holidayName } from '../holidays.js';
+import {
+  eventChip, taskChip, bindItemEvents, repeatText,
+} from './chips.js';
 
 const HOUR_HEIGHT = 56; // px — CSS의 --hour-height로 주입
 const MIN_BLOCK_PX = 22;
@@ -49,13 +52,15 @@ export function createDayView({ store, openModal }) {
   }
 
   function renderTop(dateStr, allDay, tasks) {
+    const holiday = store.getState().settings.showHolidays ? holidayName(dateStr) : null;
     return h('div', { class: 'day-top' },
       h('div', { class: 'day-row' },
         h('span', { class: 'day-row-label' }, '종일'),
         h('div', { class: 'day-row-items' },
+          holiday ? h('span', { class: 'holiday-pill' }, holiday) : null,
           allDay.length
             ? allDay.map((item) => eventChip(item))
-            : h('span', { class: 'empty' }, '종일 일정 없음'))),
+            : holiday ? null : h('span', { class: 'empty' }, '종일 일정 없음'))),
       h('div', { class: 'day-row' },
         h('span', { class: 'day-row-label' }, '할일'),
         h('div', { class: 'day-row-items' },
@@ -78,8 +83,8 @@ export function createDayView({ store, openModal }) {
       tabindex: '0',
       'data-open': item.id,
       'data-focus-key': `open:${item.id}`,
-      'aria-label': `${item.title}, ${describeWhen(item)}`,
-      title: `${item.title}\n${describeWhen(item)}`,
+      'aria-label': `${item.title}, ${describeWhen(item)}${item.recurrence ? `, 반복 ${repeatText(item)}` : ''}`,
+      title: `${item.title}\n${describeWhen(item)}${item.recurrence ? `\n↻ ${repeatText(item)}` : ''}${item.location ? `\n📍 ${item.location}` : ''}`,
       style: {
         top: `${top}px`,
         height: `${height - 2}px`,
@@ -88,8 +93,8 @@ export function createDayView({ store, openModal }) {
         '--item-color': categoryColor(item.categoryId),
       },
     },
-    h('div', { class: 'event-title' }, item.title),
-    h('div', { class: 'event-time' }, `${fmt(s)}–${fmt(e)}`));
+    h('div', { class: 'event-title' }, item.title, item.recurrence ? h('span', { class: 'repeat-icon', 'aria-hidden': 'true' }, ' ↻') : null),
+    h('div', { class: 'event-time' }, `${fmt(s)}–${fmt(e)}`, item.location ? h('span', { class: 'event-loc' }, ` · ${item.location}`) : null));
   }
 
   function renderTimeline(dayStart, timed, tasks, now) {

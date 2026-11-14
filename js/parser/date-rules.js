@@ -14,14 +14,14 @@ function makeDate(y, month, day) {
 }
 
 /** 월/일만 주어지면 올해, 이미 지났으면 내년 */
-function upcomingMonthDay(month, day, today) {
+export function upcomingMonthDay(month, day, today) {
   const d = makeDate(today.getFullYear(), month, day);
   if (!d) return null;
   return d < today ? makeDate(today.getFullYear() + 1, month, day) : d;
 }
 
 /** 일만 주어지면 이번 달, 지났거나 없는 날이면 그다음 달부터 탐색 */
-function upcomingDay(day, today) {
+export function upcomingDay(day, today) {
   if (day < 1 || day > 31) return null;
   for (let i = 0; i < 12; i += 1) {
     const base = new Date(today.getFullYear(), today.getMonth() + i, 1);
@@ -32,7 +32,7 @@ function upcomingDay(day, today) {
 }
 
 /** 오늘 포함 가장 가까운 해당 요일 */
-function nextWeekday(today, wd) {
+export function nextWeekday(today, wd) {
   return addDays(today, (wd - today.getDay() + 7) % 7);
 }
 

@@ -3,6 +3,23 @@
 import { h } from '../utils/dom.js';
 import { categoryColor } from '../models.js';
 import { describeWhen } from '../utils/format.js';
+import { describeRecurrence, anchorOf } from '../recurrence.js';
+
+/** 반복 일정 표시(↻)와 툴팁용 설명 */
+export function repeatText(item) {
+  // 회차 날짜도 원본과 같은 요일·일자·순번이므로 회차 시작일로 설명해도 같다
+  return item.recurrence ? describeRecurrence(item.recurrence, anchorOf(item)) : '';
+}
+
+export function repeatIcon(item) {
+  if (!item.recurrence) return null;
+  return h('span', { class: 'repeat-icon', 'aria-label': `반복: ${repeatText(item)}`, role: 'img' }, '↻');
+}
+
+function tooltip(item) {
+  const rep = repeatText(item);
+  return `${item.title}\n${describeWhen(item)}${rep ? `\n↻ ${rep}` : ''}${item.location ? `\n📍 ${item.location}` : ''}`;
+}
 
 export function eventChip(item, { continued = false } = {}) {
   const time = !item.allDay && !continued ? item.start.slice(11, 16) : null;
@@ -12,11 +29,12 @@ export function eventChip(item, { continued = false } = {}) {
     'data-open': item.id,
     'data-focus-key': `open:${item.id}`,
     style: { '--item-color': categoryColor(item.categoryId) },
-    title: `${item.title}\n${describeWhen(item)}`,
+    title: tooltip(item),
   },
   item.allDay ? null : h('span', { class: 'chip-dot', 'aria-hidden': 'true' }),
   time ? h('span', { class: 'chip-time' }, time) : null,
-  h('span', { class: 'chip-label' }, continued ? `… ${item.title}` : item.title));
+  h('span', { class: 'chip-label' }, continued ? `… ${item.title}` : item.title),
+  repeatIcon(item));
 }
 
 export function taskChip(item, { overdue = false, showDate = false } = {}) {
@@ -38,12 +56,13 @@ export function taskChip(item, { overdue = false, showDate = false } = {}) {
     class: 'chip-title',
     'data-open': item.id,
     'data-focus-key': `open:${item.id}`,
-    title: `${item.title}\n${describeWhen(item)}`,
+    title: tooltip(item),
   },
   overdue ? h('span', { class: 'badge badge-overdue' }, '지연') : null,
   showDate && item.due ? h('span', { class: 'chip-time' }, describeWhen(item).replace('까지', '')) : null,
   !showDate && dueTime ? h('span', { class: 'chip-time' }, dueTime) : null,
-  h('span', { class: 'chip-label' }, item.title)));
+  h('span', { class: 'chip-label' }, item.title),
+  repeatIcon(item)));
 }
 
 /**
@@ -76,10 +95,13 @@ export function listRow(item, { meta = '', overdue = false, categoryName = '' } 
     'data-focus-key': `open:${item.id}`,
   },
   h('span', { class: 'row-title' }, item.title),
-  meta || categoryName
+  meta || categoryName || item.recurrence || item.location || item.photos?.length
     ? h('span', { class: 'row-meta' },
       categoryName ? h('span', { class: 'row-cat' }, categoryName) : null,
-      meta ? h('span', {}, meta) : null)
+      meta ? h('span', { class: 'row-due' }, meta) : null,
+      item.recurrence ? h('span', { class: 'row-repeat' }, `↻ ${repeatText(item)}`) : null,
+      item.location ? h('span', { class: 'row-loc' }, `📍 ${item.location}`) : null,
+      item.photos?.length ? h('span', { class: 'row-photo', 'aria-label': `사진 ${item.photos.length}장` }, `📷 ${item.photos.length}`) : null)
     : null),
   h('span', { class: 'row-bar', 'aria-hidden': 'true' }));
 }

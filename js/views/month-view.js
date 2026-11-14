@@ -3,6 +3,7 @@ import {
   getMonthGrid, addDays, toLocalDateStr, parseLocal, isSameDay, formatKo, WEEKDAYS_KO,
 } from '../utils/date.js';
 import { eachItemDay } from '../models.js';
+import { holidayName } from '../holidays.js';
 import {
   eventChip, taskChip, listRow, bindItemEvents,
 } from './chips.js';
@@ -117,6 +118,8 @@ export function createMonthView({ store, openModal }) {
     if (isSameDay(date, ctx.selected)) classes.push('is-selected');
     if (date.getDay() === 0) classes.push('is-sun');
     if (date.getDay() === 6) classes.push('is-sat');
+    const holiday = ctx.showHolidays ? holidayName(dateStr) : null;
+    if (holiday) classes.push('is-holiday');
 
     return h('div', { class: classes.join(' '), 'data-date': dateStr },
       h('div', { class: 'cell-head' },
@@ -125,8 +128,9 @@ export function createMonthView({ store, openModal }) {
           class: 'cell-date',
           'data-goto': dateStr,
           'data-focus-key': `goto:${dateStr}`,
-          'aria-label': `${formatKo(date, 'M월 D일 ddd요일')} 일간 보기${entries.length ? `, 항목 ${entries.length}개` : ''}`,
+          'aria-label': `${formatKo(date, 'M월 D일 ddd요일')}${holiday ? ` ${holiday}` : ''} 일간 보기${entries.length ? `, 항목 ${entries.length}개` : ''}`,
         }, date.getDate()),
+        holiday ? h('span', { class: 'cell-holiday', title: holiday, 'aria-hidden': 'true' }, holiday) : null,
         h('button', {
           type: 'button', class: 'cell-add', 'data-add': dateStr, 'aria-label': `${formatKo(date, 'M월 D일')}에 일정 추가`,
         }, '+')),
@@ -182,8 +186,9 @@ export function createMonthView({ store, openModal }) {
   }
 
   /** 모바일 전용: 그리드 아래 선택한 날짜의 목록 (데스크톱에서는 CSS로 숨김) */
-  function renderAgenda(selectedDate, categories) {
+  function renderAgenda(selectedDate, categories, showHolidays) {
     const dateStr = toLocalDateStr(selectedDate);
+    const holiday = showHolidays ? holidayName(dateStr) : null;
     const entries = dayMap.get(dateStr) ?? [];
     const catName = (id) => categories.find((c) => c.id === id)?.name ?? '';
     const meta = (item) => {
@@ -194,7 +199,7 @@ export function createMonthView({ store, openModal }) {
     };
     return h('div', { class: 'month-agenda' },
       h('div', { class: 'agenda-head' },
-        h('h3', {}, formatKo(selectedDate, 'M월 D일 (ddd)')),
+        h('h3', {}, formatKo(selectedDate, 'M월 D일 (ddd)'), holiday ? h('span', { class: 'agenda-holiday' }, holiday) : null),
         h('button', { type: 'button', class: 'btn sm', 'data-goto': dateStr }, '일간 보기')),
       entries.length
         ? h('ul', { class: 'task-list' }, entries.map(({ item }) => listRow(item, {
@@ -212,7 +217,7 @@ export function createMonthView({ store, openModal }) {
     dayMap = buildDayMap(grid);
 
     const weekdays = Array.from({ length: 7 }, (_, i) => (settings.weekStartsOn + i) % 7);
-    const ctx = { month, now, selected: selectedDate };
+    const ctx = { month, now, selected: selectedDate, showHolidays: settings.showHolidays };
 
     preserveFocus(root, () => {
       root.replaceChildren(
@@ -222,7 +227,7 @@ export function createMonthView({ store, openModal }) {
           }, WEEKDAYS_KO[wd]))),
         h('div', { class: 'month-grid', 'aria-label': formatKo(selectedDate, 'YYYY년 M월') },
           grid.map((date, i) => renderCell(date, i, ctx))),
-        renderAgenda(selectedDate, state.categories),
+        renderAgenda(selectedDate, state.categories, settings.showHolidays),
       );
       if (popoverDate) renderPopover({ focus: false });
     });
